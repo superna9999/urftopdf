@@ -1,5 +1,5 @@
 #!/bin/sh
 
-cp urftopdf.types  /usr/share/cups/mime
-cp urftopdf.convs  /usr/share/cups/mime
-cp urftopdf /usr/lib/cups/filter/
+cp urftopdf.types  $DESTDIR/usr/share/cups/mime
+cp urftopdf.convs  $DESTDIR/usr/share/cups/mime
+cp urftopdf $DESTDIR/usr/lib/cups/filter/
