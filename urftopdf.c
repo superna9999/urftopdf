@@ -92,7 +92,7 @@ int add_pdf_page(struct pdf_info * info, int pagen, unsigned width, unsigned hei
         info->image = HPDF_LoadRawImageFromMem(info->pdf, info->page_data, info->width, info->height, HPDF_CS_DEVICE_RGB, 8);
         if(info->image == NULL) die("Unable to load image data");
 
-        HPDF_Page_DrawImage(info->page, info->image, 0, 0, info->width, info->height);
+        HPDF_Page_DrawImage(info->page, info->image, 0, 0, HPDF_Page_GetWidth(info->page), HPDF_Page_GetHeight(info->page));
 
         free(info->page_data);
         info->page_data = NULL;
@@ -110,10 +110,8 @@ int add_pdf_page(struct pdf_info * info, int pagen, unsigned width, unsigned hei
     info->page = HPDF_AddPage(info->pdf);
 
     // Convert to 72DPI sizes
-    /*HPDF_Page_SetWidth(info->page, ((float)info->width/(float)dpi)*DEFAULT_PDF_DPI);
-    HPDF_Page_SetHeight(info->page, ((float)info->height/(float)dpi)*DEFAULT_PDF_DPI);*/
-    HPDF_Page_SetWidth(info->page, info->width);
-    HPDF_Page_SetHeight(info->page, info->height);
+    HPDF_Page_SetWidth(info->page, ((float)info->width/(float)dpi)*DEFAULT_PDF_DPI);
+    HPDF_Page_SetHeight(info->page, ((float)info->height/(float)dpi)*DEFAULT_PDF_DPI);
 
     return 0;
 }
@@ -126,7 +124,7 @@ int close_pdf_file(struct pdf_info * info)
         info->image = HPDF_LoadRawImageFromMem(info->pdf, info->page_data, info->width, info->height, HPDF_CS_DEVICE_RGB, 8);
         if(info->image == NULL) die("Unable to load image data");
 
-        HPDF_Page_DrawImage(info->page, info->image, 0, 0, info->width, info->height);
+        HPDF_Page_DrawImage(info->page, info->image, 0, 0, HPDF_Page_GetWidth(info->page), HPDF_Page_GetHeight(info->page));
 
         free(info->page_data);
         info->page_data = NULL;
