@@ -1,0 +1,3 @@
+# URF to PDF handler, force URF throught this filter
+
+image/urf    application/pdf 0  urftopdf

@@ -1,0 +1,7 @@
+This is an inital work on UNIRAST CUPS filter
+
+The urftopdf.c program is a simple CUPS filter which decodes an UNIRAST file to a PDF file.
+It does not handle the Colorspace/Duplex Mode/Quality informations.
+It depends on the libharu 2.2.1 and libcups.
+
+Thanks for http://alanQuatermain.net/ for its URF file partial decode.
