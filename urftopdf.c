@@ -29,6 +29,8 @@
 #include <cups/cups.h>
 #include <hpdf.h>
 
+#include "unirast.h"
+
 #define DEFAULT_PDF_DPI 72
 
 #define PROGRAM "urftopdf"
@@ -292,11 +294,13 @@ int decode_raster(int fd, int width, int height, int bpp, struct pdf_info * pdf)
         }
     }
     while(cur_line < height);
+
+    return 0;
 }
 
 int main(int argc, char **argv)
 {
-    int fd, page, fd_pdf, ret;
+    int fd, page;
     struct urf_file_header head, head_orig;
     struct urf_page_header page_header, page_header_orig;
     struct pdf_info pdf;
@@ -366,9 +370,20 @@ int main(int argc, char **argv)
         iprintf("Size : %dx%d pixels\n", page_header.width, page_header.height);
         iprintf("Dots per Inches : %d\n", page_header.dot_per_inch);
 
+        if(page_header.colorspace != UNIRAST_COLOR_SPACE_SRGB_24BIT_1)
+        {
+            die("Invalid ColorSpace, only RGB 24BIT type 1 is supported");
+        }
+        
+        if(page_header.bpp != UNIRAST_BPP_24BIT)
+        {
+            die("Invalid Bit Per Pixel value, only 24bit is supported");
+        }
+
         if(add_pdf_page(&pdf, page, page_header.width, page_header.height, page_header.bpp, page_header.dot_per_inch) != 0) die("Unable to create PDF file");
 
-        decode_raster(fd, page_header.width, page_header.height, page_header.bpp, &pdf);
+        if(decode_raster(fd, page_header.width, page_header.height, page_header.bpp, &pdf) != 0)
+            die("Failed to decode Page");
     }
 
     close_pdf_file(&pdf);
