@@ -20,7 +20,7 @@
 #ifndef _UNIRAST_H_
 #define _UNIRAST_H_
 
-enum
+enum unirast_color_space_e
 {
     // Grayscale
     UNIRAST_COLOR_SPACE_GRAYSCALE_8BIT = 0,
@@ -34,29 +34,29 @@ enum
 
     //CMYK
     UNIRAST_COLOR_SPACE_CMYK_32BIT_64BIT = 6,
-} unirast_color_space_e;
+};
 
-enum
+enum unirast_duplex_mode_e
 {
     UNIRAST_DUPLEX_MODE_0 = 0,
     UNIRAST_DUPLEX_MODE_1 = 1,
     UNIRAST_DUPLEX_MODE_2 = 2,
     UNIRAST_DUPLEX_MODE_3 = 3,
-} unirast_duplex_mode_e;
+};
 
-enum
+enum unirast_quality_e
 {
     UNIRAST_QUALITY_3 = 3,
     UNIRAST_QUALITY_4 = 4,
     UNIRAST_QUALITY_5 = 5,
-} unirast_quality_e;
+};
 
-enum
+enum unirast_bpp_e
 {
     UNIRAST_BPP_8BIT = 8,
     UNIRAST_BPP_24BIT = 24,
     UNIRAST_BPP_32BIT = 32,
     UNIRAST_BPP_64BIT = 64,
-} unirast_bpp_e;
+};
 
 #endif
