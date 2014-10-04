@@ -4,4 +4,6 @@ The urftopdf.c program is a simple CUPS filter which decodes an UNIRAST file to 
 It does not handle the Colorspace/Duplex Mode/Quality informations.
 It depends on the libharu 2.2.1 and libcups.
 
+This version depends on libqpdf 3.0 or hpdf.
+
 Thanks for http://alanQuatermain.net/ for its URF file partial decode.

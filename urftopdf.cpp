@@ -13,8 +13,9 @@
  *  along with this program.  If not, see <http://www.gnu.org/licenses/>.
  *
  * @brief Decode URF  to a PDF file
- * @file urf_decode.c
- * @author Neil 'Superna' Armstrong <superna9999@gmail.com> (C) 2010
+ * @file urf_decode.cpp
+ * @author Neil 'Superna' Armstrong <superna9999@gmail.com> (C) 2010-2014
+ * @author Tobias Hoffmann <smilingthax@gmail.com> (c) 2012
  */
 
 #include <sys/types.h>
@@ -26,12 +27,26 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include <arpa/inet.h>   // ntohl
+
+#include <vector>
+
+#ifdef QPDF_BACKEND
+#include <qpdf/QPDF.hh>
+#include <qpdf/QPDFWriter.hh>
+#include <qpdf/QUtil.hh>
+
+#include <qpdf/Pl_Flate.hh>
+#include <qpdf/Pl_Buffer.hh>
+#endif
+#ifdef HPDF_BACKEND
 #include <cups/cups.h>
 #include <hpdf.h>
+#endif
 
 #include "unirast.h"
 
-#define DEFAULT_PDF_DPI 72
+#define DEFAULT_PDF_UNIT 72   // 1/72 inch
 
 #define PROGRAM "urftopdf"
 
@@ -43,7 +58,7 @@
 
 #define iprintf(format, ...) fprintf(stderr, "INFO: (" PROGRAM ") " format, __VA_ARGS__)
 
-void die(char * str)
+void die(const char * str)
 {
     fprintf(stderr, "CRIT: (" PROGRAM ") die(%s) [%m]\n", str);
     exit(1);
@@ -53,20 +68,38 @@ void die(char * str)
 
 struct pdf_info
 {
+#ifdef HPDF_BACKEND
     HPDF_Doc pdf;
     HPDF_Page page;
     HPDF_Image image;
+    unsigned stride_bytes;
+    uint8_t * page_data;
+    char * filename;
+#endif
+#ifdef QPDF_BACKEND
+    pdf_info() 
+      : pagecount(0),
+        width(0),height(0),
+        pixel_bytes(0),line_bytes(0),
+        bpp(0),
+        page_width(0),page_height(0)
+    {
+    }
+
+    QPDF pdf;
+    QPDFObjectHandle page;
+    PointerHolder<Buffer> page_data;
+    double page_width,page_height;
+#endif
     unsigned pagecount;
     unsigned width;
     unsigned height;
     unsigned pixel_bytes;
     unsigned line_bytes;
-    unsigned stride_bytes;
     unsigned bpp;
-    uint8_t * page_data;
-    char * filename;
 };
 
+#ifdef HPDF_BACKEND
 void pdf_error_handler(HPDF_STATUS error_no, HPDF_STATUS detail_no, void *user_data)
 {
     fprintf(stderr, "CRIT: (" PROGRAM ") pdf_error_handler error_no=%04X, detail_no=%u\n", (HPDF_UINT)error_no, (HPDF_UINT)detail_no);
@@ -106,14 +139,14 @@ int add_pdf_page(struct pdf_info * info, int pagen, unsigned width, unsigned hei
     info->line_bytes = (width*info->pixel_bytes);
     info->bpp = bpp;
 
-    info->page_data = malloc(info->line_bytes*info->height);
+    info->page_data = (uint8_t*)malloc(info->line_bytes*info->height);
     if(info->page_data == NULL) die("Unable to allocate page data");
 
     info->page = HPDF_AddPage(info->pdf);
 
     // Convert to 72DPI sizes
-    HPDF_Page_SetWidth(info->page, ((float)info->width/(float)dpi)*DEFAULT_PDF_DPI);
-    HPDF_Page_SetHeight(info->page, ((float)info->height/(float)dpi)*DEFAULT_PDF_DPI);
+    HPDF_Page_SetWidth(info->page, ((float)info->width/(float)dpi)*DEFAULT_PDF_UNIT);
+    HPDF_Page_SetHeight(info->page, ((float)info->height/(float)dpi)*DEFAULT_PDF_UNIT);
 
     return 0;
 }
@@ -137,7 +170,7 @@ int close_pdf_file(struct pdf_info * info)
     return 0;
 }
 
-void pdf_set_line(struct pdf_info * info, int line_n, uint8_t line[])
+void pdf_set_line(struct pdf_info * info, unsigned line_n, uint8_t line[])
 {
     dprintf("pdf_set_line(%d)\n", line_n);
 
@@ -149,6 +182,176 @@ void pdf_set_line(struct pdf_info * info, int line_n, uint8_t line[])
     
     memcpy((info->page_data+(line_n*info->line_bytes)), line, info->line_bytes);
 }
+#endif
+#ifdef QPDF_BACKEND
+int create_pdf_file(struct pdf_info * info, unsigned pagecount)
+{
+    try {
+        info->pdf.emptyPDF();
+    } catch (...) {
+        return 1;
+    }
+
+    info->pagecount = pagecount;
+
+    return 0;
+}
+
+QPDFObjectHandle makeBox(double x1, double y1, double x2, double y2)
+{
+    QPDFObjectHandle ret=QPDFObjectHandle::newArray();
+    ret.appendItem(QPDFObjectHandle::newReal(x1));
+    ret.appendItem(QPDFObjectHandle::newReal(y1));
+    ret.appendItem(QPDFObjectHandle::newReal(x2));
+    ret.appendItem(QPDFObjectHandle::newReal(y2));
+    return ret;
+}
+
+enum ColorSpace {
+    DEVICE_GRAY,
+    DEVICE_RGB,
+    DEVICE_CMYK
+};
+
+#define PRE_COMPRESS
+/* or temporarily store images?
+    if(cupsTempFile2(tempfile_name, 255) == NULL) die("Unable to create a temporary pdf file");
+    iprintf("Created temporary file '%s'\n", tempfile_name);
+*/
+
+QPDFObjectHandle makeImage(QPDF &pdf, PointerHolder<Buffer> page_data, unsigned width, unsigned height, ColorSpace cs, unsigned bpc)
+{
+    QPDFObjectHandle ret = QPDFObjectHandle::newStream(&pdf);
+
+    std::map<std::string,QPDFObjectHandle> dict;
+
+    dict["/Type"]=QPDFObjectHandle::newName("/XObject");
+    dict["/Subtype"]=QPDFObjectHandle::newName("/Image");
+    dict["/Width"]=QPDFObjectHandle::newInteger(width);
+    dict["/Height"]=QPDFObjectHandle::newInteger(height);
+    dict["/BitsPerComponent"]=QPDFObjectHandle::newInteger(bpc);
+
+    if (cs==DEVICE_GRAY) {
+        dict["/ColorSpace"]=QPDFObjectHandle::newName("/DeviceGray");
+    } else if (cs==DEVICE_RGB) {
+        dict["/ColorSpace"]=QPDFObjectHandle::newName("/DeviceRGB");
+    } else if (cs==DEVICE_CMYK) {
+        dict["/ColorSpace"]=QPDFObjectHandle::newName("/DeviceCMYK");
+    } else {
+        return QPDFObjectHandle();
+    }
+
+    ret.replaceDict(QPDFObjectHandle::newDictionary(dict));
+
+#ifdef PRE_COMPRESS
+    // we deliver already compressed content (instead of letting QPDFWriter do it), to avoid using excessive memory
+    Pl_Buffer psink("psink");
+    Pl_Flate pflate("pflate",&psink,Pl_Flate::a_deflate);
+    
+    pflate.write(page_data->getBuffer(),page_data->getSize());
+    pflate.finish();
+
+//    /Filter /FlateDecode
+//    /DecodeParms  [<</Predictor 1 /Colors 1[3] /BitsPerComponent $bits /Columns $x>>]  ??
+    ret.replaceStreamData(PointerHolder<Buffer>(psink.getBuffer()),
+                          QPDFObjectHandle::newName("/FlateDecode"),QPDFObjectHandle::newNull());
+#else
+    ret.replaceStreamData(page_data,QPDFObjectHandle::newNull(),QPDFObjectHandle::newNull());
+#endif
+
+    return ret;
+}
+
+void finish_page(struct pdf_info * info)
+{
+    //Finish previous Page
+    if(!info->page_data.getPointer())
+        return;
+
+    QPDFObjectHandle image = makeImage(info->pdf, info->page_data, info->width, info->height, DEVICE_RGB, 8);
+    if(!image.isInitialized()) die("Unable to load image data");
+
+    // add it
+    info->page.getKey("/Resources").getKey("/XObject").replaceKey("/I",image);
+
+    // draw it
+    std::string content;
+    content.append(QUtil::double_to_string(info->page_width) + " 0 0 " + 
+                   QUtil::double_to_string(info->page_height) + " 0 0 cm\n");
+    content.append("/I Do\n");
+    info->page.getKey("/Contents").replaceStreamData(content,QPDFObjectHandle::newNull(),QPDFObjectHandle::newNull());
+
+    // bookkeeping
+    info->page_data = PointerHolder<Buffer>();
+}
+
+int add_pdf_page(struct pdf_info * info, int pagen, unsigned width, unsigned height, int bpp, unsigned dpi)
+{
+    try {
+        finish_page(info); // any active
+
+        info->width = width;
+        info->height = height;
+        info->pixel_bytes = bpp/8;
+        info->line_bytes = (width*info->pixel_bytes);
+        info->bpp = bpp;
+    
+        info->page_data = PointerHolder<Buffer>(new Buffer(info->line_bytes*info->height));
+
+        QPDFObjectHandle page = QPDFObjectHandle::parse(
+            "<<"
+            "  /Type /Page"
+            "  /Resources <<"
+            "    /XObject << >> "
+            "  >>"
+            "  /MediaBox null "
+            "  /Contents null "
+            ">>");
+        page.replaceKey("/Contents",QPDFObjectHandle::newStream(&info->pdf)); // data will be provided later
+    
+        // Convert to pdf units
+        info->page_width=((double)info->width/dpi)*DEFAULT_PDF_UNIT;
+        info->page_height=((double)info->height/dpi)*DEFAULT_PDF_UNIT;
+        page.replaceKey("/MediaBox",makeBox(0,0,info->page_width,info->page_height));
+    
+        info->page = info->pdf.makeIndirectObject(page); // we want to keep a reference
+        info->pdf.addPage(info->page, false);
+    } catch (std::bad_alloc &ex) {
+        die("Unable to allocate page data");
+    } catch (...) {
+        return 1;
+    }
+
+    return 0;
+}
+
+int close_pdf_file(struct pdf_info * info)
+{
+    try {
+        finish_page(info); // any active
+
+        QPDFWriter output(info->pdf,NULL);
+        output.write();
+    } catch (...) {
+        return 1;
+    }
+
+    return 0;
+}
+
+void pdf_set_line(struct pdf_info * info, unsigned line_n, uint8_t line[])
+{
+    dprintf("pdf_set_line(%d)\n", line_n);
+
+    if(line_n > info->height)
+    {
+        dprintf("Bad line %d\n", line_n);
+        return;
+    }
+  
+    memcpy((info->page_data->getBuffer()+(line_n*info->line_bytes)), line, info->line_bytes);
+}
+#endif
 
 // Data are in network endianness
 struct urf_file_header {
@@ -170,21 +373,25 @@ struct urf_page_header {
     uint32_t unknown3;
 } __attribute__((__packed__));
 
-int decode_raster(int fd, int width, int height, int bpp, struct pdf_info * pdf)
+int decode_raster(int fd, unsigned width, unsigned height, int bpp, struct pdf_info * info)
 {
     // We should be at raster start
     int i, j;
-    int cur_line = 0;
-    int pos = 0;
+    unsigned cur_line = 0;
+    unsigned pos = 0;
     uint8_t line_repeat_byte = 0;
     unsigned line_repeat = 0;
     int8_t packbit_code = 0;
     int pixel_size = (bpp/8);
-    uint8_t * pixel_container;
-    uint8_t * line_container;
+    std::vector<uint8_t> pixel_container;
+    std::vector<uint8_t> line_container;
 
-    pixel_container = malloc(pixel_size);
-    line_container = malloc(pixel_size*width);
+    try {
+        pixel_container.resize(pixel_size);
+        line_container.resize(pixel_size*width);
+    } catch (...) {
+        die("Unable to allocate temporary storage");
+    }
 
     do
     {
@@ -214,7 +421,7 @@ int decode_raster(int fd, int width, int height, int bpp, struct pdf_info * pdf)
             if(packbit_code == -128)
             {
                 dprintf("\tp%06dl%06d : blank rest of line.\n", pos, cur_line);
-                memset((line_container+(pos*pixel_size)), 0xFF, (pixel_size*(width-pos)));
+                memset((&line_container[pos*pixel_size]), 0xFF, (pixel_size*(width-pos)));
                 pos = width;
                 break;
             }
@@ -223,7 +430,7 @@ int decode_raster(int fd, int width, int height, int bpp, struct pdf_info * pdf)
                 int n = (packbit_code+1);
 
                 //Read pixel
-                if(read(fd, pixel_container, pixel_size) < pixel_size)
+                if(read(fd, &pixel_container[0], pixel_size) < pixel_size)
                 {
                     dprintf("p%06dl%06d : pixel repeat EOF at %lu\n", pos, cur_line, lseek(fd, 0, SEEK_CUR));
                     return 1;
@@ -260,7 +467,7 @@ int decode_raster(int fd, int width, int height, int bpp, struct pdf_info * pdf)
 
                 for(i = 0 ; i < n ; ++i)
                 {
-                    if(read(fd, pixel_container, pixel_size) < pixel_size)
+                    if(read(fd, &pixel_container[0], pixel_size) < pixel_size)
                     {
                         dprintf("p%06dl%06d : literal_pixel EOF at %lu\n", pos, cur_line, lseek(fd, 0, SEEK_CUR));
                         return 1;
@@ -287,9 +494,9 @@ int decode_raster(int fd, int width, int height, int bpp, struct pdf_info * pdf)
         dprintf("\tl%06d : End Of line, drawing %d times.\n", cur_line, line_repeat);
 
         // write lines
-        for(i = 0 ; i < line_repeat ; ++i)
+        for(i = 0 ; i < (int)line_repeat ; ++i)
         {
-            pdf_set_line(pdf, cur_line, line_container);
+            pdf_set_line(info, cur_line, &line_container[0]);
             ++cur_line;
         }
     }
@@ -304,9 +511,11 @@ int main(int argc, char **argv)
     struct urf_file_header head, head_orig;
     struct urf_page_header page_header, page_header_orig;
     struct pdf_info pdf;
+#ifdef HPDF_BACKEND
     char tempfile_name[255];
 
     memset(&pdf, 0, sizeof(pdf));
+#endif
 
     FILE * input = NULL;
 
@@ -324,8 +533,10 @@ int main(int argc, char **argv)
     else
         input = stdin;
 
+#ifdef HPDF_BACKEND
     if(cupsTempFile2(tempfile_name, 255) == NULL) die("Unable to create a temporary pdf file");
     iprintf("Created temporary file '%s'\n", tempfile_name);
+#endif
 
     // Get fd from file
     fd = fileno(input);
@@ -343,9 +554,13 @@ int main(int argc, char **argv)
 
     iprintf("%s file, with %d page(s).\n", head.unirast, head.page_count);
 
+#ifdef HPDF_BACKEND
     if(create_pdf_file(&pdf, tempfile_name, head.page_count) != 0) die("Unable to create PDF file");
+#else
+    if(create_pdf_file(&pdf, head.page_count) != 0) die("Unable to create PDF file");
+#endif
 
-    for(page = 0 ; page < head.page_count ; ++page)
+    for(page = 0 ; page < (int)head.page_count ; ++page)
     {
         if(read(fd, &page_header_orig, sizeof(page_header_orig)) == -1) die("Unable to read page header");
 
@@ -388,6 +603,7 @@ int main(int argc, char **argv)
 
     close_pdf_file(&pdf);
 
+#ifdef HPDF_BACKEND
     // output generated file
     {
         uint8_t * buffer[4096];
@@ -405,6 +621,7 @@ int main(int argc, char **argv)
     }
 
     unlink(tempfile_name);
+#endif
 
     return 0;
 }
