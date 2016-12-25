@@ -72,6 +72,7 @@ struct pdf_info
     HPDF_Doc pdf;
     HPDF_Page page;
     HPDF_Image image;
+    HPDF_ColorSpace color_space;
     unsigned stride_bytes;
     uint8_t * page_data;
     char * filename;
@@ -119,12 +120,12 @@ int create_pdf_file(struct pdf_info * info, char * filename, unsigned pagecount)
     return 0;
 }
 
-int add_pdf_page(struct pdf_info * info, int pagen, unsigned width, unsigned height, int bpp, unsigned dpi)
+void draw_pdf_page(struct pdf_info * info)
 {
     if(info->page_data)
     {
         //Finish previous Page
-        info->image = HPDF_LoadRawImageFromMem(info->pdf, info->page_data, info->width, info->height, HPDF_CS_DEVICE_RGB, 8);
+        info->image = HPDF_LoadRawImageFromMem(info->pdf, info->page_data, info->width, info->height, info->color_space, 8);
         if(info->image == NULL) die("Unable to load image data");
 
         HPDF_Page_DrawImage(info->page, info->image, 0, 0, HPDF_Page_GetWidth(info->page), HPDF_Page_GetHeight(info->page));
@@ -132,6 +133,12 @@ int add_pdf_page(struct pdf_info * info, int pagen, unsigned width, unsigned hei
         free(info->page_data);
         info->page_data = NULL;
     }
+}
+
+int add_pdf_page(struct pdf_info * info, int pagen, unsigned width, unsigned height, int bpp, unsigned dpi,
+                 unsigned color_space)
+{
+    draw_pdf_page(info);
 
     info->width = width;
     info->height = height;
@@ -144,6 +151,10 @@ int add_pdf_page(struct pdf_info * info, int pagen, unsigned width, unsigned hei
 
     info->page = HPDF_AddPage(info->pdf);
 
+    info->color_space = HPDF_CS_DEVICE_RGB;
+    if(color_space == UNIRAST_COLOR_SPACE_GRAYSCALE_8BIT)
+        info->color_space = HPDF_CS_DEVICE_GRAY;
+
     // Convert to 72DPI sizes
     HPDF_Page_SetWidth(info->page, ((float)info->width/(float)dpi)*DEFAULT_PDF_UNIT);
     HPDF_Page_SetHeight(info->page, ((float)info->height/(float)dpi)*DEFAULT_PDF_UNIT);
@@ -153,17 +164,7 @@ int add_pdf_page(struct pdf_info * info, int pagen, unsigned width, unsigned hei
 
 int close_pdf_file(struct pdf_info * info)
 {
-    if(info->page_data)
-    {
-        //Finish previous Page
-        info->image = HPDF_LoadRawImageFromMem(info->pdf, info->page_data, info->width, info->height, HPDF_CS_DEVICE_RGB, 8);
-        if(info->image == NULL) die("Unable to load image data");
-
-        HPDF_Page_DrawImage(info->page, info->image, 0, 0, HPDF_Page_GetWidth(info->page), HPDF_Page_GetHeight(info->page));
-
-        free(info->page_data);
-        info->page_data = NULL;
-    }
+    draw_pdf_page(info);
 
     HPDF_SaveToFile(info->pdf, info->filename);
 
@@ -585,17 +586,18 @@ int main(int argc, char **argv)
         iprintf("Size : %dx%d pixels\n", page_header.width, page_header.height);
         iprintf("Dots per Inches : %d\n", page_header.dot_per_inch);
 
-        if(page_header.colorspace != UNIRAST_COLOR_SPACE_SRGB_24BIT_1)
+        if(page_header.colorspace != UNIRAST_COLOR_SPACE_SRGB_24BIT_1 && page_header.colorspace != UNIRAST_COLOR_SPACE_GRAYSCALE_8BIT)
         {
-            die("Invalid ColorSpace, only RGB 24BIT type 1 is supported");
+            die("Invalid ColorSpace, currently only RGB 24BIT type 1 and Grayscale 8BIT are supported");
         }
         
-        if(page_header.bpp != UNIRAST_BPP_24BIT)
+        if(page_header.bpp != UNIRAST_BPP_24BIT && page_header.bpp != UNIRAST_BPP_8BIT)
         {
-            die("Invalid Bit Per Pixel value, only 24bit is supported");
+            die("Invalid Bit Per Pixel value, only 24bit and 8bit are supported");
         }
 
-        if(add_pdf_page(&pdf, page, page_header.width, page_header.height, page_header.bpp, page_header.dot_per_inch) != 0) die("Unable to create PDF file");
+        if(add_pdf_page(&pdf, page, page_header.width, page_header.height, page_header.bpp, page_header.dot_per_inch, page_header.colorspace) != 0)
+            die("Unable to create PDF file");
 
         if(decode_raster(fd, page_header.width, page_header.height, page_header.bpp, &pdf) != 0)
             die("Failed to decode Page");
