@@ -91,6 +91,7 @@ struct pdf_info
     QPDFObjectHandle page;
     PointerHolder<Buffer> page_data;
     double page_width,page_height;
+    unsigned page_colourspace;
 #endif
     unsigned pagecount;
     unsigned width;
@@ -269,7 +270,11 @@ void finish_page(struct pdf_info * info)
     if(!info->page_data.getPointer())
         return;
 
-    QPDFObjectHandle image = makeImage(info->pdf, info->page_data, info->width, info->height, DEVICE_RGB, 8);
+    ColorSpace qpdf_cs = DEVICE_RGB;
+    if(info->page_colourspace == UNIRAST_COLOR_SPACE_GRAYSCALE_8BIT)
+      qpdf_cs = DEVICE_GRAY;
+
+    QPDFObjectHandle image = makeImage(info->pdf, info->page_data, info->width, info->height, qpdf_cs, 8);
     if(!image.isInitialized()) die("Unable to load image data");
 
     // add it
@@ -286,7 +291,8 @@ void finish_page(struct pdf_info * info)
     info->page_data = PointerHolder<Buffer>();
 }
 
-int add_pdf_page(struct pdf_info * info, int pagen, unsigned width, unsigned height, int bpp, unsigned dpi)
+int add_pdf_page(struct pdf_info * info, int pagen, unsigned width, unsigned height, int bpp, unsigned dpi,
+                 unsigned colourspace)
 {
     try {
         finish_page(info); // any active
@@ -296,7 +302,7 @@ int add_pdf_page(struct pdf_info * info, int pagen, unsigned width, unsigned hei
         info->pixel_bytes = bpp/8;
         info->line_bytes = (width*info->pixel_bytes);
         info->bpp = bpp;
-    
+        info->page_colourspace = colourspace;
         info->page_data = PointerHolder<Buffer>(new Buffer(info->line_bytes*info->height));
 
         QPDFObjectHandle page = QPDFObjectHandle::parse(
